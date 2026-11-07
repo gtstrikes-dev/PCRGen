@@ -1,7 +1,7 @@
 """
 Transcript -> Inventory tool (local)
 
-Setup:   pip install python-docx openpyxl requests
+Setup:   pip install python-docx openpyxl requests pypdf
 Run:     python transcript_tool.py
 API key: set env var GEMINI_API_KEY, or paste it in the app (optionally saved to config.json beside this file).
 
@@ -32,20 +32,22 @@ import prompts
 APP_DIR = Path(__file__).parent
 CONFIG = APP_DIR / "config.json"
 DEFAULT_MODEL = "gemini-3.8-flash"
+CONFIG_VERSION = 2
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 # ------------------------------------------------------------------ macro data (from your .bas files)
 # FormatText replacements: whole-word, case-insensitive, applied in this order after commas -> full stops.
 TEXT_REPLACEMENTS = list(zip(
-    ["points and switches", "slash", "windows and frames", "windowsill", "metre", "window covering",
+    ["points and switches", "slash", "windows and frames", "windowsill", "window covering",
      "window treatment", "benchtop", "benchtops", "colourbond", "colour bond", "intact in working order",
-     "intact and working order", "down light", "glove", "gloves", "tower", " is ", " are ", " a ", " there ",
-     "watermarks", "watermarked", "the "],
-    ["Points & Switches", "/", "Windows & Frames", "window sill", "meter", "Window Covering",
-     "Window Treatment", "bench top", "bench top", "Colorbond", "Colorbond", "intact and in working order",
-     "intact and in working order", "downlight", "globe", "globes", "towel", " ", " ", " ", " ",
-     "water marks", "water marked", ""],
+     "intact and working order", "down light", "glove", "gloves", "tower", "watermarks", "watermarked"],
+    ["Points & Switches", "/", "Windows & Frames", "window sill", "Window Covering",
+     "Window Treatment", "bench top", "bench top", "Colourbond", "Colourbond", "intact and in working order",
+     "intact and in working order", "downlight", "globe", "globes", "towel", "water marks", "water marked"],
 ))
+# Never allow a replacement rule to silently delete common spoken words.
+_PROTECTED_WORD_REPLACEMENTS = {"is", "are", "a", "an", "there", "the", "to", "of", "in", "on", "with", "and", "or"}
+
 CLEAN_KW = ("unclean,grubby,cobweb,cobwebs,dirty,dirt,dusty,dust,residue,spot marks,black marks,dark marks,debris,"
             "weeds,droppings,faeces,mould,smudge,smudging,smudged,white marks,white mark,spot mark,black mark,"
             "drip mark,drip marks,light marks,washable marks,wash marks,wash mark,bug debris,weed,soap scum,"
@@ -186,6 +188,8 @@ _TOILET.insert(_TOILET.index("light") + 1, "exhaust_fan")
 _TEMPLATES = {
     "generic": _GENERIC,
     "toilet": _TOILET,
+    "bedroom": ["door", "cornices", "light", "walls", "aircon", "windows", "blinds", "power", "skirting", "floor_coverings", "wardrobe", "additional"],
+    "garage": ["door", "external_door", "cornices", "light", "walls", "power", "floor_coverings", "auto_door", "additional"],
     "kitchen": ["door", "cornices", "light", "walls", "aircon", "windows", "blinds", "sliding_door", "power", "skirting",
                 "floor_coverings", "drawers", "underbench", "bench_top", "splash_back", "sink", "tapware", "range_hood",
                 "stove", "oven", "other_appliance", "pantry", "additional"],
@@ -208,13 +212,34 @@ def _room_template(room):
         return "kitchen"
     if "laundry" in r:
         return "laundry"
+    if "bedroom" in r:
+        return "bedroom"
+    if "garage" in r:
+        return "garage"
     if re.fullmatch(r"(toilet|wc|powder room)( \d+)?", r):
         return "toilet"
     return "generic"
 
 
 def _classify(name):
-    n = name.lower()
+    n = name.lower().strip()
+    # Composite names must be classified by their principal item, not a secondary word.
+    if "wardrobe" in n or re.search(r"\brobe\b", n):
+        return "wardrobe"
+    if "trough cabinet" in n:
+        return "trough_cabinet"
+    if "toilet roll" in n:
+        return "toilet_roll"
+    if "shower" in n and re.search(r"tapware|tap|mixer|showerhead|shower head", n):
+        return "shower_tapware"
+    if "shower" in n and "tile" in n:
+        return "shower_tiles"
+    if "shower" in n:
+        return "shower_screen"
+    if "bath" in n and re.search(r"tapware|tap|mixer|spout", n):
+        return "bath_tapware"
+    if "bath" in n and "tile" in n:
+        return "bath_tiles"
     for k, rx in _PEARL_RX:
         if rx.search(n):
             return k
@@ -269,9 +294,23 @@ def _compile_rules(rules):
 
 
 def format_text(s, rules=None):
-    """rules = [(find, replace), ...]; defaults to TEXT_REPLACEMENTS."""
-    s = s.replace("\u00a0", " ").replace("\u202f", " ").replace("\u201a", ",").replace(",", ".")
-    for rx, rep in _compile_rules(tuple((f, r) for f, r in (TEXT_REPLACEMENTS if rules is None else rules))):
+    """Apply non-destructive terminology fixes; never delete common words."""
+    s = (s.replace("\u00a0", " ").replace("\u202f", " ").replace("\u201a", ",")
+           .replace(",", ".").replace(";", "."))
+    source_rules = TEXT_REPLACEMENTS if rules is None else rules
+    safe_rules = []
+    for find, replace in source_rules:
+        find, replace = str(find), str(replace)
+        key = find.strip().lower()
+        if not replace.strip() and key in _PROTECTED_WORD_REPLACEMENTS:
+            continue
+        # Migrate legacy defaults that contradicted the Australian-English prompt.
+        if key == "metre" and replace.strip().lower() == "meter":
+            replace = "metre"
+        if key in {"colourbond", "colour bond"} and replace.strip().lower() == "colorbond":
+            replace = "Colourbond"
+        safe_rules.append((find, replace))
+    for rx, rep in _compile_rules(tuple(safe_rules)):
         s = rx.sub(lambda m, rep=rep: rep, s)
     return s
 
@@ -346,16 +385,8 @@ def sentence_case(s):
 
 
 def strip_bang(s):
-    out, skip = [], False
-    for ch in s:
-        if ch == "!":
-            skip = True
-        elif skip and ch.isalpha() and ch.isascii():
-            out.append(ch.upper())
-            skip = False
-        else:
-            out.append(ch)
-    return "".join(out).strip()
+    """Remove only the leading Normal room marker; preserve punctuation elsewhere."""
+    return s.strip()[1:].lstrip() if s.strip().startswith("!") else s.strip()
 
 
 # ------------------------------------------------------------------ macro 3: ChangeYtoN
@@ -376,7 +407,7 @@ def run_macros(rows, rules=None):
             out.append({"room": strip_bang(start_case(format_text(r[1], rules)))})
         else:
             name = strip_bang(start_case(format_text(r[1], rules)))
-            desc = strip_bang(sentence_case(format_text(r[2], rules)))
+            desc = sentence_case(format_text(r[2], rules))
             c, u, w = yn(desc)
             out.append({"item": name, "desc": desc, "clean": c, "undamaged": u, "working": w})
     return out
@@ -393,14 +424,36 @@ def _tok(s):
 
 
 def compare(raw, list_text):
+    """Approximate word audit against descriptions only (not room/item labels)."""
     rows = parse_list(list_text)
     raw_t = _tok(_TAGS.sub(" ", raw))
-    all_out = _tok(" ".join(" ".join(r[1:]) for r in rows))
     desc_out = _tok(" ".join(r[2] for r in rows if r[0] == "item"))
-    omitted = raw_t - all_out
+    omitted = raw_t - desc_out
     added = desc_out - raw_t
     fmt = lambda c: ", ".join(f"{w}" + (f" x{n}" if n > 1 else "") for w, n in sorted(c.items()))
     return fmt(omitted), fmt(added), sum(omitted.values()), sum(added.values())
+
+
+def audit_structure(list_text, mode):
+    """Return structural warnings without silently rewriting model output."""
+    warnings = []
+    lines = [ln for ln in list_text.replace("\r", "").split("\n") if ln.strip()]
+    item_lines = [ln for ln in lines if "\t" in ln]
+    header_lines = [ln for ln in lines if "\t" not in ln]
+    if not item_lines:
+        warnings.append("No tab-separated item rows were detected.")
+    for number, line in enumerate(lines, 1):
+        if "\t" in line:
+            name, desc = line.split("\t", 1)
+            if not name.strip():
+                warnings.append(f"Line {number}: item name is blank.")
+            if not desc.strip():
+                warnings.append(f"Line {number}: description is blank.")
+        elif mode == "normal" and not line.lstrip().startswith("!"):
+            warnings.append(f"Line {number}: Normal room header is missing its leading ! marker: {line[:90]}")
+    if len(header_lines) > max(1, len(item_lines)):
+        warnings.append("There are many un-tabbed lines; check that descriptions have not been split into accidental room headers.")
+    return warnings
 
 
 # ------------------------------------------------------------------ layout
@@ -574,7 +627,12 @@ def run_gui():
     remember = tk.BooleanVar(value=bool(cfg.get("api_key")))
     job = tk.StringVar(value="normal")
     want_word, want_excel = tk.BooleanVar(value=True), tk.BooleanVar(value=True)
-    layout = tk.StringVar(value="standard")
+    # Version 2 changes the default back to the five-column Standard layout.
+    # Older config files stored "final" automatically because it used to be the default.
+    saved_layout = cfg.get("layout", "standard") if cfg.get("config_version", 0) >= CONFIG_VERSION else "standard"
+    if saved_layout not in LAYOUTS:
+        saved_layout = "standard"
+    layout = tk.StringVar(value=saved_layout)
     status = tk.StringVar(value="Ready.")
     ref_text = {"text": "", "name": ""}
     out_dir = tk.StringVar(value=cfg.get("out_dir", ""))
@@ -593,7 +651,8 @@ def run_gui():
     ttk.Checkbutton(top, text="Remember key on this PC", variable=remember).grid(row=0, column=4, padx=6)
 
     def save_cfg():
-        data = {"model": model_var.get().strip(), "out_dir": out_dir.get().strip(), "file_base": file_base.get().strip()}
+        data = {"config_version": CONFIG_VERSION, "model": model_var.get().strip(), "out_dir": out_dir.get().strip(), "file_base": file_base.get().strip(),
+                "layout": layout.get()}
         if remember.get():
             data["api_key"] = key_var.get().strip()
         try:
@@ -766,7 +825,7 @@ def run_gui():
     ttk.Checkbutton(bot, text="Word (.docx)", variable=want_word).pack(side="left", padx=6)
     ttk.Checkbutton(bot, text="Excel (.xlsx)", variable=want_excel).pack(side="left", padx=6)
     ttk.Radiobutton(bot, text="Standard: Item | Description | Clean | Undamaged | Working", variable=layout, value="standard").pack(side="left", padx=14)
-    ttk.Radiobutton(bot, text="Final report: Item | Clean | Undamaged | Working | (blank) | Description", variable=layout, value="final").pack(side="left")
+    ttk.Radiobutton(bot, text="Final report: Item | Clean | Undamaged | Working | blank column | Description", variable=layout, value="final").pack(side="left")
     bot2 = ttk.Frame(bot)
     bot2.pack(fill="x", pady=(6, 0))
     ttk.Label(bot2, text="Save to folder").pack(side="left", padx=6)
@@ -798,8 +857,9 @@ def run_gui():
             return messagebox.showwarning("API key", "Enter a Gemini API key (or set GEMINI_API_KEY).")
         save_cfg()
         sp = prompts.NORMAL if job.get() == "normal" else prompts.PEARL
-        if job.get() == "pearl" and ref_text["text"]:
-            sp += "\n\nPEARL PROPERTY REF (formatting and terminology guide ONLY; never copy facts from it):\n" + ref_text["text"]
+        if job.get() == "pearl" and ref_text["name"]:
+            sp += ("\n\nA Pearl reference PDF has been selected. Use it only as item terminology/order guidance. "
+                   "Do not copy any property facts from it. The application's Pearl ordering layer applies the reference item order after generation.")
         sp += prompts.FIDELITY
         used_job = job.get()
         do_reorder = used_job == "pearl" and reorder.get()
@@ -814,7 +874,7 @@ def run_gui():
                     lst = reorder_pearl(lst)
                 om, ad, no, na = compare(raw, lst)
                 rows = parse_list(lst)
-                bad = [r for r in rows if r[0] == "room" and job.get() == "normal" and not r[1].startswith("!")]
+                structure_warnings = audit_structure(lst, used_job)
                 def done():
                     state["job"] = used_job
                     t_list.delete("1.0", "end")
@@ -823,7 +883,7 @@ def run_gui():
                     t_rev.insert("1.0",
                         f"POSSIBLY OMITTED from transcript ({no} words; fillers/tags/self-corrections are expected):\n{om or 'none'}\n\n"
                         f"POSSIBLY ADDED in descriptions ({na} words; AU spelling and brand fixes are expected):\n{ad or 'none'}\n\n"
-                        + (f"LINES WITHOUT A TAB OR '!' (check these):\n" + "\n".join(r[1] for r in bad) if bad else ""))
+                        + ("\n\nSTRUCTURE WARNINGS (review before export):\n" + "\n".join("- " + w for w in structure_warnings) if structure_warnings else "\n\nStructure check: no obvious formatting issues detected."))
                     nb.select(t_list)
                     status.set(f"Done: {sum(1 for r in rows if r[0]=='item')} items. Review tabs 2 and 3, then Export.{warn}")
                     b_proc.state(["!disabled"])
