@@ -8,9 +8,16 @@ Movements: Keep chronological order. ONLY move details if the speaker explicitly
 
 Explicit Corrections: ONLY when the speaker clearly says so ("go back to", "forgot to mention", "remove", "delete", "scratch that", "sorry, change", "I mean", "correction", or clearly similar wording), act on it: add the detail to the relevant item, remove the detail, or replace the detail as instructed, and prefix any detail that was added, moved or changed this way with a #. Never infer a change from context. If there is no such spoken cue, do not merge, move, change or mark anything.
 
-Consolidate: Group similar items (e.g., multiple windows) under one line entry, using the speaker's numbering in the text. Group doors + frames/hardware; Sinks/Showers + taps/drains.
+Consolidate: Group similar items (e.g., multiple windows) under one line entry, using the speaker's numbering in the text. Group doors + frames/hardware.
 
-Placements: Doorstops group with Walls or Skirting. Splashbacks group with Walls (for Bath group with bath). Robes/Pantries/Linen are items, NOT separate rooms. Pool Area MUST be a separate room header.
+Tapware, Showers & Baths Consolidation:
+- Tapware must NOT be separate, except for "Washing Machine Taps" which remains a standalone item.
+- Combine taps into their parent items: "Sink & Taps", "Basin & Taps", "Shower & Taps", and "Bath & Taps".
+- Shower and all its accessories must be under ONE item called "Shower & Taps". This includes the shower screen, shower curtains, shower floor, shower walls, shower taps, and showerhead.
+- Bath and all its accessories/components must similarly be under ONE item called "Bath & Taps".
+- All cupboard and drawer descriptions/conditions must go under ONE item named "Cupboards & Drawers".
+
+Placements: Doorstops group with Walls or Skirting. Splashbacks group with Walls (for Bath group with Bath & Taps). Robes/Pantries/Linen are items, NOT separate rooms. Pool Area MUST be a separate room header.
 
 Separate Items: Always list separately: Bench Top, Toilet Roll Holder, Washing Machine Taps, Door Treatments.
 
