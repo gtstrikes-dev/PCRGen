@@ -41,7 +41,6 @@ with st.sidebar:
         model = st.selectbox("Model", models, index=models.index(cur), key="model_pick")
     else:
         model = st.text_input("Model", value=default_model)
-    ref = st.file_uploader("Pearl Property Ref (optional)", type=["txt", "md", "docx", "pdf"]) if job == "Pearl" else None
     reorder = st.checkbox("Reorder items to the reference template (Pearl: PDF, Normal: blank report)", value=True)
     layout_label = st.radio("Layout", ["Standard", "Final report"])
     if method.startswith("Gemini") and st.button("Test key / list models"):
@@ -138,9 +137,6 @@ if st.button("1. Process transcript", type="primary"):
         st.error("GEMINI_API_KEY is not set. Add it under the app's Secrets, or switch Method to Local rules.")
     else:
         sp = prompts.NORMAL if job == "Normal" else prompts.PEARL
-        if ref is not None:
-            reftxt = t.read_reference(ref.name, ref.getvalue())
-            sp += "\n\nPEARL PROPERTY REF (formatting and terminology guide ONLY; never copy facts from it):\n" + reftxt
         sp += prompts.FIDELITY
         try:
             with st.spinner("Processing with Gemini..."):

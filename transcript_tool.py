@@ -892,7 +892,6 @@ def run_gui():
     want_word, want_excel = tk.BooleanVar(value=True), tk.BooleanVar(value=True)
     layout = tk.StringVar(value="standard")
     status = tk.StringVar(value="Ready.")
-    ref_text = {"text": "", "name": ""}
     out_dir = tk.StringVar(value=cfg.get("out_dir", ""))
     file_base = tk.StringVar(value=cfg.get("file_base", "Inventory"))
     rules_state = load_rules()
@@ -989,15 +988,6 @@ def run_gui():
     ttk.Button(jb, text="Edit item list", command=edit_items).pack(side="left", padx=4)
     reorder = tk.BooleanVar(value=True)
     ttk.Checkbutton(jb, text="Reorder items to reference template (Pearl: PDF, Normal: blank report)", variable=reorder).pack(side="left", padx=16)
-    ref_lbl = ttk.Label(jb, text="(optional) Pearl Property Ref: none")
-    def pick_ref():
-        p = filedialog.askopenfilename(filetypes=[("Reference", "*.txt *.md *.docx *.pdf")])
-        if not p:
-            return
-        ref_text["text"] = read_reference(p, Path(p).read_bytes())
-        ref_text["name"] = os.path.basename(p)
-        ref_lbl.config(text=f"Pearl Property Ref: {ref_text['name']}")
-    ttk.Button(jb, text="Load Pearl ref...", command=pick_ref).pack(side="left", padx=16)
 
     def open_rules():
         win = tk.Toplevel(root)
@@ -1311,8 +1301,6 @@ def run_gui():
             return messagebox.showwarning("API key", "Enter a Gemini API key (or set GEMINI_API_KEY).")
         save_cfg()
         sp = prompts.NORMAL if job.get() == "normal" else prompts.PEARL
-        if job.get() == "pearl" and ref_text["text"]:
-            sp += "\n\nPEARL PROPERTY REF (formatting and terminology guide ONLY; never copy facts from it):\n" + ref_text["text"]
         sp += prompts.FIDELITY
         used_job = job.get()
         do_reorder = reorder.get()
