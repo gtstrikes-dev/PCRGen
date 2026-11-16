@@ -32,13 +32,32 @@ st.title("Transcript to Inventory")
 with st.sidebar:
     method = st.radio("Method", ["Gemini (AI)", "Local rules (no API)"])
     job = st.radio("Job type", ["Normal", "Pearl"])
-    model = st.text_input("Model", value=secret("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"))
+    default_model = secret("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+    models = st.session_state.get("models")
+    if models:
+        cur = st.session_state.get("model_pick", default_model)
+        if cur not in models:
+            models = [cur] + models
+        model = st.selectbox("Model", models, index=models.index(cur), key="model_pick")
+    else:
+        model = st.text_input("Model", value=default_model)
     ref = st.file_uploader("Pearl Property Ref (optional)", type=["txt", "md", "docx", "pdf"]) if job == "Pearl" else None
     reorder = st.checkbox("Reorder items to the reference template (Pearl: PDF, Normal: blank report)", value=True)
     layout_label = st.radio("Layout", ["Standard", "Final report"])
-    if method.startswith("Gemini") and st.button("Test key / model"):
-        ok, msg = t.test_key(key, model.strip()) if key else (False, "GEMINI_API_KEY is not set. Add it under the app's Secrets.")
-        (st.success if ok else st.error)(msg)
+    if method.startswith("Gemini") and st.button("Test key / list models"):
+        if not key:
+            st.session_state["model_msg"] = (False, "GEMINI_API_KEY is not set. Add it under the app's Secrets.")
+        else:
+            ok, msg = t.test_key(key, model.strip())
+            try:
+                st.session_state["models"] = t.list_models(key)
+                msg += f"  {len(st.session_state['models'])} models loaded - pick one in the Model box above."
+            except Exception as e:
+                msg += f"  (Could not list models: {e})"
+            st.session_state["model_msg"] = (ok, msg)
+        st.rerun()
+    if method.startswith("Gemini") and st.session_state.get("model_msg"):
+        (st.success if st.session_state["model_msg"][0] else st.error)(st.session_state["model_msg"][1])
 
 # ---- separate replacement-word lists for Normal and Pearl (kept for this session; download to keep a copy)
 if "rules" not in st.session_state:

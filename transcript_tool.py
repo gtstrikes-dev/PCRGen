@@ -930,12 +930,26 @@ def run_gui():
         k = get_key(key_var.get())
         if not k:
             return messagebox.showwarning("API key", "Enter a key (or set GEMINI_API_KEY).")
-        status.set("Testing key...")
+        status.set("Testing key and fetching models...")
         def work():
             ok, msg = test_key(k, model_var.get().strip())
-            root.after(0, lambda: (status.set(msg), (messagebox.showinfo if ok else messagebox.showerror)("API key test", msg)))
+            ms = []
+            try:
+                ms = list_models(k)
+            except Exception:
+                pass
+            def done():
+                if ms:
+                    model_box["values"] = ms
+                    fallback_box["values"] = [""] + ms
+                    m2 = msg + f"\n\n{len(ms)} models are now in the Model dropdown - pick one from the list."
+                else:
+                    m2 = msg
+                status.set(m2.splitlines()[0])
+                (messagebox.showinfo if ok else messagebox.showerror)("API key test", m2)
+            root.after(0, done)
         threading.Thread(target=work, daemon=True).start()
-    ttk.Button(top, text="Test key", command=do_test).grid(row=0, column=5)
+    ttk.Button(top, text="Test key / list models", command=do_test).grid(row=0, column=5)
 
     def do_list():
         k = get_key(key_var.get())
