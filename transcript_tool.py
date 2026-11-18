@@ -774,9 +774,10 @@ def write_word(data, layout, path):
         borders.append(e)
     tblPr.append(borders)
 
-    def finish_row(row, header=False):
+    def finish_row(row, header=False, can_split=False):
         trPr = row._tr.get_or_add_trPr()
-        trPr.append(OxmlElement("w:cantSplit"))
+        if not can_split:   # very long rows must be allowed to run onto the next page, or Word clips the overflow
+            trPr.append(OxmlElement("w:cantSplit"))
         if header:
             trPr.append(OxmlElement("w:tblHeader"))
         for c, w in zip(row.cells, widths):
@@ -791,7 +792,7 @@ def write_word(data, layout, path):
 
     for d in data:
         row = tbl.add_row()
-        finish_row(row)
+        finish_row(row, can_split=len(d.get("desc", "")) > 900)
         if "room" in d:
             m = row.cells[0].merge(row.cells[-1])
             _put(m, d["room"], bold=True, color=NAVY)
