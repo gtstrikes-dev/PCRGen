@@ -58,18 +58,52 @@ with st.sidebar:
     if method.startswith("Gemini") and st.session_state.get("model_msg"):
         (st.success if st.session_state["model_msg"][0] else st.error)(st.session_state["model_msg"][1])
 
-# ---- separate replacement-word lists for Normal and Pearl (kept for this session; download to keep a copy)
-if "rules" not in st.session_state:
-    st.session_state["rules"] = t.load_rules()  # starts from replacements.json in the repo if present
+# ---- separate replacement-word lists for Normal and Pearl. Saved to a server file (survives refresh) and,
+# if GITHUB_TOKEN is set in Secrets, to a private Gist (survives reboots/redeploys).
+import pandas as pd
+import persist
+
+
+def _boot():
+    g = persist.gist_read()
+    if g:  # restore saved copies into the local files, then load normally
+        if g.get("replacements.json"):
+            t.REPL_FILE.write_text(g["replacements.json"], encoding="utf-8")
+        if g.get("keywords.json"):
+            t.KW_FILE.write_text(g["keywords.json"], encoding="utf-8")
+    st.session_state["rules"] = t.load_rules()
+    st.session_state["kws"] = t.load_keywords()
+
+
+def _save_all():
+    t.save_rules(st.session_state["rules"])
+    t.save_keywords(st.session_state["kws"])
+    persist.gist_write({"replacements.json": json.dumps(st.session_state["rules"], indent=1, ensure_ascii=False),
+                        "keywords.json": json.dumps(st.session_state["kws"], indent=1, ensure_ascii=False)})
+    st.session_state["ver"] = st.session_state.get("ver", 0) + 1  # fresh editors, no stale edit state
+
+
+if "rules" not in st.session_state or "kws" not in st.session_state:
+    _boot()
+ver = st.session_state.get("ver", 0)
+
 with st.sidebar.expander("Replacement words"):
     which = st.radio("Edit list for", ["Normal", "Pearl"], horizontal=True, key="rules_which").lower()
-    import pandas as pd
-    df = pd.DataFrame(st.session_state["rules"][which], columns=["Find", "Replace"])
-    edited = st.data_editor(df, num_rows="dynamic", width="stretch", hide_index=True, key=f"ed_{which}")
-    st.session_state["rules"][which] = [[str(a), "" if b is None or b != b else str(b)]
-                                        for a, b in edited.itertuples(index=False)
-                                        if a is not None and a == a and str(a).strip()]
-    st.caption('Whole word, ignores case. Spaces matter: " is " removes the word is. Leave Replace empty to delete a word.')
+    with st.form(f"rf_{which}_{ver}"):
+        df = pd.DataFrame(st.session_state["rules"][which], columns=["Find", "Replace"])
+        edited = st.data_editor(df, num_rows="dynamic", width="stretch", hide_index=True, key=f"ed_{which}_{ver}")
+        saved = st.form_submit_button("Save replacement words", type="primary")
+    if saved:
+        st.session_state["rules"][which] = [[str(a), "" if b is None or b != b else str(b)]
+                                            for a, b in edited.itertuples(index=False)
+                                            if a is not None and a == a and str(a).strip()]
+        _save_all()
+        st.session_state["flash"] = f"Saved {len(st.session_state['rules'][which])} {which} replacement words."
+        st.rerun()
+    if st.session_state.get("flash"):
+        st.success(st.session_state.pop("flash"))
+    st.caption('Whole word, ignores case. Spaces matter: " is " removes the word is. Leave Replace empty to delete a word. '
+               'Press Save after editing.')
     st.download_button("Download both lists (.json)", json.dumps(st.session_state["rules"], indent=1),
                        "replacements.json", "application/json")
     up = st.file_uploader("Load lists (.json) or word_replacements.txt", type=["json", "txt"])
@@ -85,18 +119,25 @@ with st.sidebar.expander("Replacement words"):
                     if isinstance(loaded.get(k), list):
                         st.session_state["rules"][k] = [[str(a), str(b)] for a, b in loaded[k] if str(a).strip()]
             st.session_state["rules_loaded"] = up.file_id
+            _save_all()
             st.rerun()
         except Exception as e:
             st.error(f"Could not read that file: {e}")
-if "kws" not in st.session_state:
-    st.session_state["kws"] = t.load_keywords()  # starts from keywords.json in the repo if present
 with st.sidebar.expander("Clean / Undamaged / Working keywords"):
     kj = st.radio("Prompt", ["Normal", "Pearl"], horizontal=True, key="kw_job").lower()
     kc = st.radio("Column", ["Clean", "Undamaged", "Working"], horizontal=True, key="kw_col").lower()
-    kdf = pd.DataFrame({"Keyword": st.session_state["kws"][kj][kc]})
-    ked = st.data_editor(kdf, num_rows="dynamic", width="stretch", hide_index=True, key=f"kw_{kj}_{kc}")
-    st.session_state["kws"][kj][kc] = [str(x).strip() for x in ked["Keyword"] if x is not None and x == x and str(x).strip()]
-    st.caption("If ANY keyword appears in a description, that column becomes N, otherwise Y. Matches letters inside text, ignoring case.")
+    with st.form(f"kf_{kj}_{kc}_{ver}"):
+        kdf = pd.DataFrame({"Keyword": st.session_state["kws"][kj][kc]})
+        ked = st.data_editor(kdf, num_rows="dynamic", width="stretch", hide_index=True, key=f"kw_{kj}_{kc}_{ver}")
+        ksaved = st.form_submit_button("Save keywords", type="primary")
+    if ksaved:
+        st.session_state["kws"][kj][kc] = [str(x).strip() for x in ked["Keyword"] if x is not None and x == x and str(x).strip()]
+        _save_all()
+        st.session_state["kflash"] = "Keywords saved."
+        st.rerun()
+    if st.session_state.get("kflash"):
+        st.success(st.session_state.pop("kflash"))
+    st.caption("If ANY keyword appears in a description, that column becomes N, otherwise Y. Matches letters inside text, ignoring case. Press Save after editing.")
     st.download_button("Download keywords (.json)", json.dumps(st.session_state["kws"], indent=1), "keywords.json", "application/json")
     kup = st.file_uploader("Load keywords (.json)", type="json", key="kw_up")
     if kup is not None and st.session_state.get("kw_loaded") != kup.file_id:
@@ -108,9 +149,20 @@ with st.sidebar.expander("Clean / Undamaged / Working keywords"):
                     if isinstance(v, list):
                         st.session_state["kws"][j][c] = [str(x).strip() for x in v if str(x).strip()]
             st.session_state["kw_loaded"] = kup.file_id
+            _save_all()
             st.rerun()
         except Exception as e:
             st.error(f"Could not read that file: {e}")
+if persist.enabled():
+    gid = st.session_state.get("new_gist_id")
+    if gid and not persist._secret("GIST_ID"):
+        st.sidebar.warning(f"Settings gist created. Add this to Streamlit Secrets so it is reused: GIST_ID = \"{gid}\"")
+    if st.session_state.get("persist_err"):
+        st.sidebar.error(st.session_state["persist_err"])
+    else:
+        st.sidebar.caption("Settings are backed up to your private Gist.")
+else:
+    st.sidebar.caption("Settings are saved on the server (kept on refresh). Add GITHUB_TOKEN in Secrets to keep them across reboots.")
 file_name = st.sidebar.text_input("Download file name", value="Inventory")
 
 tf = st.file_uploader("Or load a transcript file (.txt, .docx, .xlsx, .pdf, .vtt, .srt, .csv)", type=["txt", "md", "vtt", "srt", "csv", "docx", "xlsx", "xlsm", "pdf"], key="tr_up")

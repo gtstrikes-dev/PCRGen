@@ -19,3 +19,8 @@ Local rules mode needs no key. Never commit your key to GitHub.
 - `app.py` - the web page
 - `transcript_tool.py`, `prompts.py`, `local_parser.py` - the engine, prompts and no-API rules
 - `replacements.json`, `keywords.json` - default replacement words and Y/N keywords (edit in the sidebar, then download the lists and commit them to keep changes)
+
+## Keeping replacement words / keywords
+Edit the tables in the sidebar, then press **Save replacement words** / **Save keywords**. Saved lists survive a browser refresh.
+To also survive app reboots/redeploys, add to Streamlit Secrets: `GITHUB_TOKEN = "..."` (a GitHub token with only the *gist* scope).
+On first save the app creates a private gist and shows a `GIST_ID = "..."` line; add that to Secrets too.
